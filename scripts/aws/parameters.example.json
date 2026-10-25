@@ -1,0 +1,12 @@
+{
+  "VpcId": "vpc-REPLACE",
+  "PublicSubnets": "subnet-REPLACE,subnet-REPLACE",
+  "PrivateSubnets": "subnet-REPLACE,subnet-REPLACE",
+  "CertificateArn": "arn:aws:acm:ap-south-1:REPLACE:certificate/REPLACE",
+  "AppOrigin": "https://REPLACE.example.org",
+  "SmtpHost": "REPLACE.smtp.example.org",
+  "SmtpSecretArn": "arn:aws:secretsmanager:ap-south-1:REPLACE:secret:REPLACE",
+  "SarvamSecretArn": "arn:aws:secretsmanager:ap-south-1:REPLACE:secret:REPLACE",
+  "MailFrom": "noreply@REPLACE.example.org",
+  "SarvamModel": "saaras:v3"
+}

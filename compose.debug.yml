@@ -1,0 +1,15 @@
+services:
+  api:
+    image: learning-setu:debug
+    build:
+      target: debug
+    read_only: false
+    cap_add: [SYS_PTRACE]
+    security_opt: [seccomp:unconfined]
+    ports: ["127.0.0.1:2345:2345"]
+    environment:
+      FRONTEND_DIR: /srv/frontend
+    volumes:
+      - ./frontend:/srv/frontend:ro
+    healthcheck:
+      test: [CMD, /out/setu-debug, health]

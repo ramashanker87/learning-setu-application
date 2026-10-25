@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Learning Setu | Reading assessment</title>
+    <meta name="description" content="Bring clarity to reading assessment. Learning Setu helps educators manage students, record reading sessions, and review results." />
+    <link rel="stylesheet" href="/styles.css?v=20261024-reading-progress" />
+    <link rel="stylesheet" href="/progress.css?v=20261024-reading-progress" />
+  </head>
+  <body class="landing-page">
+    <a class="skip-link" href="#app">Skip to main content</a>
+    <header>
+      <a class="brand" href="/" aria-label="Learning Setu home">
+        <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect width="40" height="40" rx="12" fill="currentColor"/><path d="M10 12c4-1 7 0 10 2 3-2 6-3 10-2v17c-4-1-7 0-10 2-3-2-6-3-10-2V12Z" stroke="white" stroke-width="1.8" stroke-linejoin="round"/><path d="M20 14v17" stroke="white" stroke-width="1.8"/></svg>
+        <strong>Learning Setu</strong>
+      </a>
+      <span class="brand-description">Reading assessment</span>
+      <div class="language-switch" role="group" aria-label="Language / भाषा">
+        <button type="button" data-language="en" lang="en" aria-pressed="true">English</button>
+        <button type="button" data-language="hi" lang="hi" aria-pressed="false">हिन्दी</button>
+      </div>
+      <button id="logout" hidden>Sign out</button>
+    </header>
+    <div id="message" role="status" aria-live="polite"></div>
+    <div class="layout">
+      <nav id="nav" aria-label="Main navigation"></nav>
+      <main id="app" tabindex="-1"><section class="startup-panel" role="status"><h1>Welcome to Learning Setu</h1><p>Preparing your school workspace…</p></section><noscript>Please enable JavaScript to sign in and access your school workspace.</noscript></main>
+    </div>
+    <script type="module" src="/app.js?v=20261024-reading-progress"></script>
+  </body>
+</html>

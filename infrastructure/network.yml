@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Learning Setu staging network with private application subnets and one NAT gateway.
+Parameters:
+  Prefix:
+    Type: String
+    Default: setu-staging
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: {Fn::Sub: '${Prefix}-vpc'}}]
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: {Ref: Vpc}
+      InternetGatewayId: {Ref: Gateway}
+  PublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+  PublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+  PrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+  PrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.11.0/24
+      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: {Ref: Vpc}
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: {Ref: PublicRoutes}
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: {Ref: Gateway}
+  PublicARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: {Ref: PublicA}
+      RouteTableId: {Ref: PublicRoutes}
+  PublicBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: {Ref: PublicB}
+      RouteTableId: {Ref: PublicRoutes}
+  NatAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+  Nat:
+    Type: AWS::EC2::NatGateway
+    DependsOn: InternetRoute
+    Properties:
+      AllocationId: {Fn::GetAtt: [NatAddress, AllocationId]}
+      SubnetId: {Ref: PublicA}
+  PrivateRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: {Ref: Vpc}
+  EgressRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: {Ref: PrivateRoutes}
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: {Ref: Nat}
+  PrivateARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: {Ref: PrivateA}
+      RouteTableId: {Ref: PrivateRoutes}
+  PrivateBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: {Ref: PrivateB}
+      RouteTableId: {Ref: PrivateRoutes}
+Outputs:
+  VpcId:
+    Value: {Ref: Vpc}
+  PublicSubnets:
+    Value: {Fn::Join: [',', [{Ref: PublicA}, {Ref: PublicB}]]}
+  PrivateSubnets:
+    Value: {Fn::Join: [',', [{Ref: PrivateA}, {Ref: PrivateB}]]}

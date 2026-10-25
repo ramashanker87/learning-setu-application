@@ -1,0 +1,64 @@
+{
+  "SCHOOL": {
+    "identifiers": [
+      "recognition",
+      "affiliation",
+      "pan",
+      "gstin"
+    ],
+    "required": [
+      "recognition"
+    ],
+    "documents": [
+      "recognition"
+    ],
+    "requiredFields": [
+      "registrationAuthority"
+    ]
+  },
+  "NGO": {
+    "identifiers": [
+      "pan",
+      "gstin",
+      "ngoDarpan",
+      "cin"
+    ],
+    "required": [],
+    "documents": [
+      "registration"
+    ],
+    "requiredFields": [
+      "registrationAuthority",
+      "registrationNumber"
+    ]
+  },
+  "SCHOOL_GROUP": {
+    "identifiers": [
+      "pan",
+      "gstin",
+      "cin",
+      "affiliation"
+    ],
+    "required": [],
+    "documents": [
+      "registration"
+    ],
+    "requiredFields": [
+      "registrationAuthority",
+      "registrationNumber"
+    ]
+  },
+  "ORGANIZATION": {
+    "identifiers": [
+      "pan",
+      "gstin"
+    ],
+    "required": [],
+    "documents": [
+      "registration"
+    ],
+    "requiredFields": [
+      "orgNo"
+    ]
+  }
+}

@@ -1,0 +1,1322 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Learning Setu Go modular application on ECS Fargate; dedicated per-organization
+  resources are provisioned by the worker.
+Metadata:
+  # IntegrationSettings rejects empty secret ARNs when enabled; when disabled,
+  # the entire secrets policy is removed. W1030 cannot infer CloudFormation Rules.
+  cfn-lint:
+    config:
+      ignore_checks: [W1030]
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+    - staging
+    - production
+  Prefix:
+    Type: String
+    Default: setu-prod
+    AllowedPattern: '[a-z0-9-]{1,16}'
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  ImageUri:
+    Type: String
+  AccessMode:
+    Type: String
+    Default: custom-domain
+    AllowedValues: [custom-domain, cloudfront]
+    Description: Use cloudfront for an AWS-provided HTTPS address without a domain or certificate.
+  CloudFrontPrefixListId:
+    Type: String
+    Default: ''
+    Description: Regional com.amazonaws.global.cloudfront.origin-facing managed prefix list ID.
+  CertificateArn:
+    Type: String
+    Default: ''
+  AppOrigin:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|https://[^/]+'
+  EnableActivationEmails:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Send managed Cognito login invitations after organizations become ACTIVE, independently of SMTP and transcription.
+  DisableIntegrations:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Disable email invitations and transcription until credentials are configured.
+  SmtpHost:
+    Type: String
+    Default: ''
+  SmtpSecretArn:
+    Type: String
+    Default: ''
+    Description: Secrets Manager JSON with username and password; grant ECS execution
+      role access
+  MailFrom:
+    Type: String
+    Default: ''
+  SarvamSecretArn:
+    Type: String
+    Default: ''
+    Description: Optional existing secret containing a raw Sarvam API key; leave empty to use the managed learning-setu/sarvam JSON secret.
+  SarvamModel:
+    Type: String
+    Default: saaras:v3
+    AllowedValues:
+    - saaras:v3
+Conditions:
+  ManagedSarvamSecret:
+    Fn::Equals: [{Ref: SarvamSecretArn}, '']
+  SmtpConfigured:
+    Fn::Not: [{Fn::Equals: [{Ref: SmtpSecretArn}, '']}]
+  IntegrationsEnabled:
+    Fn::Equals: [{Ref: DisableIntegrations}, 'false']
+  TemporaryAccess:
+    Fn::Equals: [{Ref: AccessMode}, cloudfront]
+  CustomDomain:
+    Fn::Equals: [{Ref: AccessMode}, custom-domain]
+Rules:
+  IntegrationSettings:
+    RuleCondition:
+      Fn::Equals: [{Ref: DisableIntegrations}, 'false']
+    Assertions:
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: SmtpHost}, '']}]
+      AssertDescription: SmtpHost is required when integrations are enabled.
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: SmtpSecretArn}, '']}]
+      AssertDescription: SmtpSecretArn is required when integrations are enabled.
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: SarvamSecretArn}, '']}]
+      AssertDescription: SarvamSecretArn is required when integrations are enabled.
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: MailFrom}, '']}]
+      AssertDescription: MailFrom is required when integrations are enabled.
+  DomainSettings:
+    RuleCondition:
+      Fn::Equals: [{Ref: AccessMode}, custom-domain]
+    Assertions:
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: CertificateArn}, '']}]
+      AssertDescription: Custom domain access requires an ACM certificate.
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: AppOrigin}, '']}]
+      AssertDescription: Custom domain access requires an HTTPS AppOrigin.
+  CloudFrontSettings:
+    RuleCondition:
+      Fn::Equals: [{Ref: AccessMode}, cloudfront]
+    Assertions:
+    - Assert:
+        Fn::Not: [{Fn::Equals: [{Ref: CloudFrontPrefixListId}, '']}]
+      AssertDescription: CloudFront access requires the regional origin-facing managed prefix list.
+Resources:
+  SarvamSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: ManagedSarvamSecret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: learning-setu/sarvam
+      Description: Sarvam transcription API key; replace the placeholder before enabling transcription.
+      SecretString: '{"SARVAM_API_KEY":"dummy"}'
+  Control:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName:
+        Fn::Sub: ${Prefix}-control
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+      - AttributeName: gpk
+        AttributeType: S
+      - AttributeName: gsk
+        AttributeType: S
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: lookup
+        KeySchema:
+        - AttributeName: gpk
+          KeyType: HASH
+        - AttributeName: gsk
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+  Documents:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+        - AllowedOrigins:
+          - Fn::If:
+            - TemporaryAccess
+            - Fn::Sub: https://${TemporaryDistribution.DomainName}
+            - Ref: AppOrigin
+          AllowedMethods:
+          - PUT
+          - GET
+          AllowedHeaders:
+          - content-type
+          - if-none-match
+          - x-amz-*
+  DocumentsTLS:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Documents
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - Documents
+            - Arn
+          - Fn::Sub: ${Documents.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  OrganizationResetLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${Prefix}-organization-reset
+      RetentionInDays: 30
+  OrganizationResetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: {Service: lambda.amazonaws.com}
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CheckOrganizationAdministrator
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: [dynamodb:Query, dynamodb:GetItem]
+            Resource:
+            - Fn::GetAtt: [Control, Arn]
+            - Fn::Sub: '${Control.Arn}/index/lookup'
+          - Effect: Allow
+            Action: [logs:CreateLogStream, logs:PutLogEvents]
+            Resource:
+              Fn::GetAtt: [OrganizationResetLogGroup, Arn]
+  OrganizationResetPolicy:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${Prefix}-organization-reset
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 5
+      Role:
+        Fn::GetAtt: [OrganizationResetRole, Arn]
+      Environment:
+        Variables:
+          CONTROL_TABLE: {Ref: Control}
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+          from botocore.config import Config
+          db = boto3.client('dynamodb', config=Config(connect_timeout=1, read_timeout=2, retries={'max_attempts': 0}))
+          def handler(event, context):
+              if event.get('triggerSource') != 'CustomMessage_ForgotPassword':
+                  return event
+              attrs = event.get('request', {}).get('userAttributes', {})
+              subject = attrs.get('sub', '')
+              if not subject or attrs.get('custom:team_org') or attrs.get('email_verified') != 'true':
+                  raise Exception('Password recovery is unavailable. Contact your administrator.')
+              table = os.environ['CONTROL_TABLE']
+              args = dict(TableName=table, IndexName='lookup', KeyConditionExpression='gpk = :user',
+                          ExpressionAttributeValues={':user': {'S': 'USER#' + subject}}, ProjectionExpression='pk, sk')
+              while True:
+                  page = db.query(**args)
+                  for candidate in page.get('Items', []):
+                      pk = candidate.get('pk', {}).get('S', '')
+                      if not pk.startswith('MEMBER#') or candidate.get('sk', {}).get('S') != subject:
+                          continue
+                      member = db.get_item(TableName=table, Key={'pk': candidate['pk'], 'sk': candidate['sk']}, ConsistentRead=True).get('Item', {})
+                      if member.get('role', {}).get('S') != 'ORG_ADMIN' or not member.get('active', {}).get('BOOL', False):
+                          continue
+                      org_id = member.get('orgId', {}).get('S', '')
+                      if pk != 'MEMBER#' + org_id:
+                          continue
+                      org = db.get_item(TableName=table, Key={'pk': {'S': 'ORG'}, 'sk': {'S': org_id}}, ConsistentRead=True).get('Item', {})
+                      if org.get('state', {}).get('S') == 'ACTIVE':
+                          return event
+                  if not page.get('LastEvaluatedKey'):
+                      break
+                  args['ExclusiveStartKey'] = page['LastEvaluatedKey']
+              raise Exception('Password recovery is unavailable. Contact your administrator.')
+  OrganizationResetPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: {Ref: OrganizationResetPolicy}
+      Principal: cognito-idp.amazonaws.com
+      SourceAccount: {Ref: 'AWS::AccountId'}
+      SourceArn:
+        Fn::GetAtt: [TenantPool, Arn]
+  TenantPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LambdaConfig:
+        CustomMessage:
+          Fn::GetAtt: [OrganizationResetPolicy, Arn]
+      UserPoolName:
+        Fn::Sub: ${Prefix}-tenant
+      Schema:
+      - Name: team_org
+        AttributeDataType: String
+        Mutable: false
+        Required: false
+      - Name: team_request
+        AttributeDataType: String
+        Mutable: false
+        Required: false
+      UsernameAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+      - SOFTWARE_TOKEN_MFA
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        InviteMessageTemplate:
+          EmailSubject: Your Learning Setu organization is ready
+          EmailMessage:
+            Fn::Sub:
+            - '<p>Your organization has been approved and is now ACTIVE.</p><p>Sign in using the email address that received this invitation. Account reference: <strong>{username}</strong></p><p>Temporary password: <strong>{####}</strong></p><p><a href="${LoginOrigin}/">Open Learning Setu</a> and choose <strong>Organization sign-in</strong>.</p><p>You must choose a new password at your first sign-in. This temporary password expires after 7 days. If it expires, ask the company administrator to resend your activation invitation.</p>'
+            - LoginOrigin:
+                Fn::If:
+                - TemporaryAccess
+                - Fn::Sub: https://${TemporaryDistribution.DomainName}
+                - Ref: AppOrigin
+      Policies:
+        PasswordPolicy:
+          TemporaryPasswordValidityDays: 7
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+        - Name: verified_email
+          Priority: 1
+  TenantClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId:
+        Ref: TenantPool
+      ReadAttributes: [email, email_verified, name, "custom:team_org"]
+      WriteAttributes: [email, name]
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+      - code
+      AllowedOAuthScopes:
+      - openid
+      - email
+      - profile
+      SupportedIdentityProviders:
+      - COGNITO
+      CallbackURLs:
+      - Fn::If:
+        - TemporaryAccess
+        - Fn::Sub: https://${TemporaryDistribution.DomainName}/
+        - Fn::Sub: ${AppOrigin}/
+      LogoutURLs:
+      - Fn::If:
+        - TemporaryAccess
+        - Fn::Sub: https://${TemporaryDistribution.DomainName}/
+        - Fn::Sub: ${AppOrigin}/
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      IdTokenValidity: 15
+      TokenValidityUnits:
+        IdToken: minutes
+  TenantDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId:
+        Ref: TenantPool
+      Domain:
+        Fn::Sub: ${Prefix}-tenant-${AWS::AccountId}
+  TenantLoginStyle:
+    Type: AWS::Cognito::UserPoolUICustomizationAttachment
+    DependsOn: TenantDomain
+    Properties:
+      UserPoolId:
+        Ref: TenantPool
+      ClientId:
+        Ref: TenantClient
+      CSS: |
+        .banner-customizable { padding: 28px 0; background-color: #f4f7f5; }
+        .label-customizable { font-weight: 600; }
+        .textDescription-customizable { padding-top: 12px; padding-bottom: 12px; font-size: 16px; }
+        .submitButton-customizable { font-size: 16px; font-weight: 600; margin: 20px 0 12px 0; height: 48px; width: 100%; color: #ffffff; background-color: #245f4c; }
+        .submitButton-customizable:hover { color: #ffffff; background-color: #194b3b; }
+        .inputField-customizable { width: 100%; height: 46px; color: #183e39; background-color: #ffffff; border: 1px solid #b9cabe; border-radius: 6px; }
+        .inputField-customizable:focus { border-color: #245f4c; }
+        .legalText-customizable { color: #52645a; font-size: 13px; }
+        .background-customizable { background-color: #ffffff; }
+  CompanyPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName:
+        Fn::Sub: ${Prefix}-company
+      UsernameAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      MfaConfiguration: 'ON'
+      EnabledMfas:
+      - SOFTWARE_TOKEN_MFA
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+        - Name: verified_email
+          Priority: 1
+  CompanyClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId:
+        Ref: CompanyPool
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+      - code
+      AllowedOAuthScopes:
+      - openid
+      - email
+      - profile
+      SupportedIdentityProviders:
+      - COGNITO
+      CallbackURLs:
+      - Fn::If:
+        - TemporaryAccess
+        - Fn::Sub: https://${TemporaryDistribution.DomainName}/
+        - Fn::Sub: ${AppOrigin}/
+      LogoutURLs:
+      - Fn::If:
+        - TemporaryAccess
+        - Fn::Sub: https://${TemporaryDistribution.DomainName}/
+        - Fn::Sub: ${AppOrigin}/
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      IdTokenValidity: 15
+      TokenValidityUnits:
+        IdToken: minutes
+  CompanyDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId:
+        Ref: CompanyPool
+      Domain:
+        Fn::Sub: ${Prefix}-company-${AWS::AccountId}
+  CompanyLoginStyle:
+    Type: AWS::Cognito::UserPoolUICustomizationAttachment
+    DependsOn: CompanyDomain
+    Properties:
+      UserPoolId:
+        Ref: CompanyPool
+      ClientId:
+        Ref: CompanyClient
+      CSS: |
+        .banner-customizable { padding: 28px 0; background-color: #f4f7f5; }
+        .label-customizable { font-weight: 600; }
+        .textDescription-customizable { padding-top: 12px; padding-bottom: 12px; font-size: 16px; }
+        .submitButton-customizable { font-size: 16px; font-weight: 600; margin: 20px 0 12px 0; height: 48px; width: 100%; color: #ffffff; background-color: #245f4c; }
+        .submitButton-customizable:hover { color: #ffffff; background-color: #194b3b; }
+        .inputField-customizable { width: 100%; height: 46px; color: #183e39; background-color: #ffffff; border: 1px solid #b9cabe; border-radius: 6px; }
+        .inputField-customizable:focus { border-color: #245f4c; }
+        .legalText-customizable { color: #52645a; font-size: 13px; }
+        .background-customizable { background-color: #ffffff; }
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: PlatformScope
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - cognito-idp:AdminGetUser
+            - cognito-idp:AdminCreateUser
+            Resource:
+              Fn::GetAtt: [TenantPool, Arn]
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:ConditionCheckItem
+            Resource:
+            - Fn::GetAtt:
+              - Control
+              - Arn
+            - Fn::Sub: ${Control.Arn}/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:ConditionCheckItem
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*/*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: ${Documents.Arn}/*
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: PlatformScope
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - cognito-idp:AdminGetUser
+            - cognito-idp:AdminCreateUser
+            Resource:
+              Fn::GetAtt: [TenantPool, Arn]
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:ConditionCheckItem
+            Resource:
+            - Fn::GetAtt:
+              - Control
+              - Arn
+            - Fn::Sub: ${Control.Arn}/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:ConditionCheckItem
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*/*
+          - Effect: Allow
+            Action:
+            - s3:ListBucketVersions
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*
+          - Effect: Allow
+            Action:
+            - s3:DeleteObject
+            - s3:DeleteObjectVersion
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*/*
+  ProvisioningRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: PlatformScope
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:ConditionCheckItem
+            Resource:
+            - Fn::GetAtt:
+              - Control
+              - Arn
+            - Fn::Sub: ${Control.Arn}/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:CreateTable
+            - dynamodb:DescribeTable
+            - dynamodb:UpdateContinuousBackups
+            - dynamodb:DescribeContinuousBackups
+            - dynamodb:TagResource
+            - dynamodb:ListTagsOfResource
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-*
+          - Effect: Allow
+            Action:
+            - s3:CreateBucket
+            - s3:ListBucket
+            - s3:GetBucketTagging
+            - s3:PutBucketTagging
+            - s3:PutBucketPublicAccessBlock
+            - s3:PutEncryptionConfiguration
+            - s3:PutBucketVersioning
+            - s3:PutBucketPolicy
+            - s3:PutBucketCORS
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*
+          - Effect: Allow
+            Action:
+            - s3:ListAllMyBuckets
+            - dynamodb:ListTables
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - dynamodb:DeleteTable
+            - dynamodb:Query
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-*-*-*
+          - Effect: Deny
+            Action: dynamodb:DeleteTable
+            Resource:
+              Fn::GetAtt: [Control, Arn]
+          - Effect: Allow
+            Action:
+            - s3:ListBucketVersions
+            - s3:ListBucketMultipartUploads
+            - s3:DeleteBucket
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*-*-*
+          - Effect: Allow
+            Action:
+            - s3:DeleteObject
+            - s3:DeleteObjectVersion
+            - s3:AbortMultipartUpload
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${Prefix}-*-*-*/*
+          - Effect: Allow
+            Action: s3:ListBucketVersions
+            Resource:
+              Fn::GetAtt: [Documents, Arn]
+            Condition:
+              StringLike:
+                s3:prefix: organizations/*
+          - Effect: Allow
+            Action:
+            - s3:DeleteObject
+            - s3:DeleteObjectVersion
+            Resource:
+              Fn::Sub: ${Documents.Arn}/organizations/*
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+      - PolicyName: SarvamSecretRead
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              Fn::If: [ManagedSarvamSecret, {Ref: SarvamSecret}, {Ref: SarvamSecretArn}]
+      - Fn::If:
+        - SmtpConfigured
+        - PolicyName: SmtpSecretRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                Ref: SmtpSecretArn
+        - Ref: AWS::NoValue
+  Cluster:
+    Type: AWS::ECS::Cluster
+  Logs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      RetentionInDays: 180
+    UpdateReplacePolicy: Retain
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS domain ingress or private CloudFront origin ingress
+      VpcId:
+        Ref: VpcId
+      SecurityGroupIngress:
+      - Fn::If:
+        - TemporaryAccess
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId:
+            Ref: CloudFrontPrefixListId
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Application ingress only from load balancer
+      VpcId:
+        Ref: VpcId
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3000
+        ToPort: 3000
+        SourceSecurityGroupId:
+          Ref: LoadBalancerSecurityGroup
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        Fn::If: [TemporaryAccess, {Ref: PrivateSubnets}, {Ref: PublicSubnets}]
+      SecurityGroups:
+      - Ref: LoadBalancerSecurityGroup
+      Scheme:
+        Fn::If: [TemporaryAccess, internal, internet-facing]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId:
+        Ref: VpcId
+      Port: 3000
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port:
+        Fn::If: [TemporaryAccess, 80, 443]
+      Protocol:
+        Fn::If: [TemporaryAccess, HTTP, HTTPS]
+      Certificates:
+        Fn::If:
+        - CustomDomain
+        - - CertificateArn:
+              Ref: CertificateArn
+        - Ref: AWS::NoValue
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: TargetGroup
+  TemporaryVpcOrigin:
+    Type: AWS::CloudFront::VpcOrigin
+    Condition: TemporaryAccess
+    DependsOn: Listener
+    Properties:
+      VpcOriginEndpointConfig:
+        Name:
+          Fn::Sub: ${Prefix}-alb
+        Arn:
+          Ref: LoadBalancer
+        HTTPPort: 80
+        HTTPSPort: 443
+        OriginProtocolPolicy: http-only
+  TemporaryDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: TemporaryAccess
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment:
+          Fn::Sub: ${Prefix} temporary HTTPS application access
+        HttpVersion: http2
+        IPV6Enabled: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+        - Id: application
+          DomainName:
+            Fn::GetAtt: [LoadBalancer, DNSName]
+          VpcOriginConfig:
+            VpcOriginId:
+              Fn::GetAtt: [TemporaryVpcOrigin, Id]
+        DefaultCacheBehavior:
+          TargetOriginId: application
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          # AWS managed CachingDisabled and AllViewer policies preserve authentication,
+          # organization headers, cookies and query strings without caching user data.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+        CustomErrorResponses:
+        - ErrorCode: 400
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 403
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 404
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 500
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 502
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 503
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 504
+          ErrorCachingMinTTL: 0
+  ApiTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - ApiRole
+        - Arn
+      ContainerDefinitions:
+      - Name: app
+        Image:
+          Ref: ImageUri
+        Essential: true
+        Environment:
+        - Name: APP_ENV
+          Value:
+            Ref: Environment
+        - Name: AUTH_MODE
+          Value: cognito
+        - Name: ENABLE_ACTIVATION_EMAILS
+          Value:
+            Ref: EnableActivationEmails
+        - Name: DISABLE_INTEGRATIONS
+          Value:
+            Ref: DisableIntegrations
+        - Name: TRANSCRIPTION_PROVIDER
+          Value: sarvam
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: AWS_ACCOUNT_ID
+          Value:
+            Ref: AWS::AccountId
+        - Name: CONTROL_TABLE
+          Value:
+            Ref: Control
+        - Name: DOCUMENT_BUCKET
+          Value:
+            Ref: Documents
+        - Name: RESOURCE_PREFIX
+          Value:
+            Ref: Prefix
+        - Name: APP_ORIGIN
+          Value:
+            Fn::If:
+            - TemporaryAccess
+            - Fn::Sub: https://${TemporaryDistribution.DomainName}
+            - Ref: AppOrigin
+        - Name: SMTP_HOST
+          Value:
+            Ref: SmtpHost
+        - Name: SMTP_PORT
+          Value: '465'
+        - Name: MAIL_FROM
+          Value:
+            Ref: MailFrom
+        - Name: COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${TenantPool}
+        - Name: COGNITO_CLIENT_ID
+          Value:
+            Ref: TenantClient
+        - Name: COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${TenantDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: COMPANY_COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${CompanyPool}
+        - Name: COMPANY_COGNITO_CLIENT_ID
+          Value:
+            Ref: CompanyClient
+        - Name: COMPANY_COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${CompanyDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: WORKER_MODE
+          Value: application
+        - Name: SARVAM_MODEL
+          Value:
+            Ref: SarvamModel
+        Command:
+        - api
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: Logs
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: Api
+        PortMappings:
+        - ContainerPort: 3000
+        ReadonlyRootFilesystem: true
+        MountPoints:
+        - SourceVolume: temporary
+          ContainerPath: /tmp
+          ReadOnly: false
+        HealthCheck:
+          Command:
+          - CMD
+          - /usr/local/bin/setu
+          - health
+          Interval: 30
+          Timeout: 5
+          Retries: 3
+          StartPeriod: 20
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Volumes:
+      - Name: temporary
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn:
+    - Listener
+    Properties:
+      Cluster:
+        Ref: Cluster
+      TaskDefinition:
+        Ref: ApiTask
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            Ref: PrivateSubnets
+          SecurityGroups:
+          - Ref: TaskSecurityGroup
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+      - ContainerName: app
+        ContainerPort: 3000
+        TargetGroupArn:
+          Ref: TargetGroup
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+  ApplicationTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - ApplicationRole
+        - Arn
+      ContainerDefinitions:
+      - Name: app
+        Image:
+          Ref: ImageUri
+        Essential: true
+        Environment:
+        - Name: APP_ENV
+          Value:
+            Ref: Environment
+        - Name: AUTH_MODE
+          Value: cognito
+        - Name: ENABLE_ACTIVATION_EMAILS
+          Value:
+            Ref: EnableActivationEmails
+        - Name: DISABLE_INTEGRATIONS
+          Value:
+            Ref: DisableIntegrations
+        - Name: TRANSCRIPTION_PROVIDER
+          Value: sarvam
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: AWS_ACCOUNT_ID
+          Value:
+            Ref: AWS::AccountId
+        - Name: CONTROL_TABLE
+          Value:
+            Ref: Control
+        - Name: DOCUMENT_BUCKET
+          Value:
+            Ref: Documents
+        - Name: RESOURCE_PREFIX
+          Value:
+            Ref: Prefix
+        - Name: APP_ORIGIN
+          Value:
+            Fn::If:
+            - TemporaryAccess
+            - Fn::Sub: https://${TemporaryDistribution.DomainName}
+            - Ref: AppOrigin
+        - Name: SMTP_HOST
+          Value:
+            Ref: SmtpHost
+        - Name: SMTP_PORT
+          Value: '465'
+        - Name: MAIL_FROM
+          Value:
+            Ref: MailFrom
+        - Name: COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${TenantPool}
+        - Name: COGNITO_CLIENT_ID
+          Value:
+            Ref: TenantClient
+        - Name: COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${TenantDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: COMPANY_COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${CompanyPool}
+        - Name: COMPANY_COGNITO_CLIENT_ID
+          Value:
+            Ref: CompanyClient
+        - Name: COMPANY_COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${CompanyDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: WORKER_MODE
+          Value: application
+        - Name: SARVAM_MODEL
+          Value:
+            Ref: SarvamModel
+        Command:
+        - worker
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: Logs
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: Application
+        PortMappings:
+        - ContainerPort: 3000
+        Secrets:
+        - Name: SARVAM_API_KEY
+          ValueFrom:
+            Fn::If:
+            - ManagedSarvamSecret
+            - Fn::Sub: '${SarvamSecret}:SARVAM_API_KEY::'
+            - Ref: SarvamSecretArn
+        - Fn::If:
+          - SmtpConfigured
+          - Name: SMTP_USER
+            ValueFrom:
+              Fn::Sub: '${SmtpSecretArn}:username::'
+          - Ref: AWS::NoValue
+        - Fn::If:
+          - SmtpConfigured
+          - Name: SMTP_PASSWORD
+            ValueFrom:
+              Fn::Sub: '${SmtpSecretArn}:password::'
+          - Ref: AWS::NoValue
+        ReadonlyRootFilesystem: true
+        MountPoints:
+        - SourceVolume: temporary
+          ContainerPath: /tmp
+          ReadOnly: false
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Volumes:
+      - Name: temporary
+  ApplicationService:
+    Type: AWS::ECS::Service
+    DependsOn:
+    - Listener
+    Properties:
+      Cluster:
+        Ref: Cluster
+      TaskDefinition:
+        Ref: ApplicationTask
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            Ref: PrivateSubnets
+          SecurityGroups:
+          - Ref: TaskSecurityGroup
+          AssignPublicIp: DISABLED
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+  ProvisioningTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - ProvisioningRole
+        - Arn
+      ContainerDefinitions:
+      - Name: app
+        Image:
+          Ref: ImageUri
+        Essential: true
+        Environment:
+        - Name: APP_ENV
+          Value:
+            Ref: Environment
+        - Name: AUTH_MODE
+          Value: cognito
+        - Name: ENABLE_ACTIVATION_EMAILS
+          Value:
+            Ref: EnableActivationEmails
+        - Name: DISABLE_INTEGRATIONS
+          Value:
+            Ref: DisableIntegrations
+        - Name: TRANSCRIPTION_PROVIDER
+          Value: sarvam
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: AWS_ACCOUNT_ID
+          Value:
+            Ref: AWS::AccountId
+        - Name: CONTROL_TABLE
+          Value:
+            Ref: Control
+        - Name: DOCUMENT_BUCKET
+          Value:
+            Ref: Documents
+        - Name: RESOURCE_PREFIX
+          Value:
+            Ref: Prefix
+        - Name: APP_ORIGIN
+          Value:
+            Fn::If:
+            - TemporaryAccess
+            - Fn::Sub: https://${TemporaryDistribution.DomainName}
+            - Ref: AppOrigin
+        - Name: SMTP_HOST
+          Value:
+            Ref: SmtpHost
+        - Name: SMTP_PORT
+          Value: '465'
+        - Name: MAIL_FROM
+          Value:
+            Ref: MailFrom
+        - Name: COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${TenantPool}
+        - Name: COGNITO_CLIENT_ID
+          Value:
+            Ref: TenantClient
+        - Name: COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${TenantDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: COMPANY_COGNITO_ISSUER
+          Value:
+            Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${CompanyPool}
+        - Name: COMPANY_COGNITO_CLIENT_ID
+          Value:
+            Ref: CompanyClient
+        - Name: COMPANY_COGNITO_DOMAIN
+          Value:
+            Fn::Sub: https://${CompanyDomain}.auth.${AWS::Region}.amazoncognito.com
+        - Name: WORKER_MODE
+          Value: provisioning
+        - Name: SARVAM_MODEL
+          Value:
+            Ref: SarvamModel
+        Command:
+        - worker
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: Logs
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: Provisioning
+        PortMappings:
+        - ContainerPort: 3000
+        ReadonlyRootFilesystem: true
+        MountPoints:
+        - SourceVolume: temporary
+          ContainerPath: /tmp
+          ReadOnly: false
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Volumes:
+      - Name: temporary
+  ProvisioningService:
+    Type: AWS::ECS::Service
+    DependsOn:
+    - Listener
+    Properties:
+      Cluster:
+        Ref: Cluster
+      TaskDefinition:
+        Ref: ProvisioningTask
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            Ref: PrivateSubnets
+          SecurityGroups:
+          - Ref: TaskSecurityGroup
+          AssignPublicIp: DISABLED
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+Outputs:
+  SarvamApiSecretArn:
+    Description: Secret used by the transcription worker; restart the application worker after updating its value.
+    Value:
+      Fn::If: [ManagedSarvamSecret, {Ref: SarvamSecret}, {Ref: SarvamSecretArn}]
+  ApplicationUrl:
+    Description: Open this URL to access the application.
+    Value:
+      Fn::If:
+      - TemporaryAccess
+      - Fn::Sub: https://${TemporaryDistribution.DomainName}
+      - Ref: AppOrigin
+  LoadBalancerDns:
+    Value:
+      Fn::GetAtt:
+      - LoadBalancer
+      - DNSName
+  ControlTable:
+    Value:
+      Ref: Control
+  CompanyPoolId:
+    Value:
+      Ref: CompanyPool
+  TenantPoolId:
+    Value:
+      Ref: TenantPool

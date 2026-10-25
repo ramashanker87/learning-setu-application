@@ -1,0 +1,69 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.local.json
+/.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Node.js dependencies, caches, and reports
+node_modules/
+.npm/
+.eslintcache
+coverage/
+playwright-report/
+test-results/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# AWS SAM and local cloud tooling
+.aws-sam/
+samconfig.toml
+
+# Generated build and temporary output
+dist/
+build/
+tmp/
+temp/
+*.tmp
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+/.agents/
+/.codex/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Go output and operator deployment/migration inputs
+app/bin/
+app/setu
+app/setu.exe
+coverage.out
+coverage-*.out
+*.prof
+*.test
+scripts/aws/parameters.local.json
+mapping.json
+reviewed-plan.json

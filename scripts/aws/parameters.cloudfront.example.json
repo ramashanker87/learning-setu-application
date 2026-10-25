@@ -1,0 +1,12 @@
+{
+  "AccessMode": "cloudfront",
+  "CloudFrontPrefixListId": "pl-REPLACE",
+  "VpcId": "vpc-REPLACE",
+  "PublicSubnets": "subnet-REPLACE,subnet-REPLACE",
+  "PrivateSubnets": "subnet-REPLACE,subnet-REPLACE",
+  "SmtpHost": "REPLACE.smtp.example.org",
+  "SmtpSecretArn": "arn:aws:secretsmanager:ap-south-1:REPLACE:secret:REPLACE",
+  "SarvamSecretArn": "arn:aws:secretsmanager:ap-south-1:REPLACE:secret:REPLACE",
+  "MailFrom": "noreply@REPLACE.example.org",
+  "SarvamModel": "saaras:v3"
+}

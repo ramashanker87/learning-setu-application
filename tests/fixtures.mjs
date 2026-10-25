@@ -1,0 +1,32 @@
+export const application = {
+  legalName: "Synthetic School",
+  displayName: "Synthetic School",
+  type: "SCHOOL",
+  address: "Test address",
+  state: "Bihar",
+  district: "Patna",
+  pin: "800001",
+  contactEmail: "alpha@example.test",
+  contactPhone: "+919999999999",
+  representative: {
+    name: "Synthetic",
+    designation: "Principal",
+    phone: "+919999999999",
+  },
+  registrationAuthority: "Test board",
+  registrationNumber: "TEST",
+  identifiers: { recognition: "TEST" },
+  termsAccepted: true,
+  authorityDeclared: true,
+  noticeVersion: "2026-10-v1",
+};
+export const consent = {
+  guardianName: "Test parent",
+  relationship: "parent",
+  verificationMethod: "in_person_document_review",
+  evidenceReference: "test",
+  noticeVersion: "2026-10-v1",
+  purposes: ["reading_assessment"],
+  guardianAdultVerified: true,
+  authorityVerified: true,
+};
