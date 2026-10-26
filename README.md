@@ -39,7 +39,7 @@ For the complete staff and company workflow, use the [onboarding and operations 
 
 ### Application form fields
 
-The public form collects **First Name, Last Name, Registered address, Email, Phone, PAN, GSTIN, and OrgNo**. First/last name identify the authorized representative; OrgNo is the organization registration number and supplies the initial review/workspace label (`Organization <OrgNo>`). PAN and GSTIN are optional; supplied values are normalized to uppercase and checked for 10 and 15 alphanumeric characters respectively. These format checks do not verify registration or tax status.
+The public form collects **Contact Person Name, Registered address, Email, Phone, GSTIN, and OrgNo**. Contact Person Name identifies the authorized representative; OrgNo is the organization registration number and supplies the initial review/workspace label (`Organization <OrgNo>`). GSTIN is optional; supplied values are normalized to uppercase and checked for 15 alphanumeric characters. These format checks do not verify registration or tax status.
 
 Both declarations are required:
 

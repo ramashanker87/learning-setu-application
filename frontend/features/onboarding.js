@@ -29,12 +29,11 @@ async function edit(root, o, isPublic = false) {
     const draft = {
       ...data,
       formVersion: "organization-v2",
-      identifiers: { pan: data.pan.trim().toUpperCase(), gstin: data.gstin.trim().toUpperCase() },
+      identifiers: { ...(o.draft.identifiers || {}), gstin: data.gstin.trim().toUpperCase() },
       termsAccepted: f.elements.termsAccepted.checked,
       authorityDeclared: f.elements.authorityDeclared.checked,
       noticeVersion: "2026-10-v1",
     };
-    delete draft.pan;
     delete draft.gstin;
     if (isPublic && !o.id) {
       const created = await applicationAPI("/applications", "POST", draft);
@@ -52,32 +51,27 @@ async function edit(root, o, isPublic = false) {
   const d = o.draft;
   const fields = el("div", undefined, { class: "fields" });
   f.append(fields);
-  const previousName = (d.representative?.name || "").trim().split(/\s+/);
   const values = {
-    firstName: d.firstName || previousName[0] || "",
-    lastName: d.lastName || previousName.slice(1).join(" "),
+    contactPersonName: d.contactPersonName || [d.firstName, d.lastName].filter(Boolean).join(" ") || d.representative?.name || "",
     address: d.address,
     contactEmail: d.contactEmail,
     contactPhone: d.contactPhone,
-    pan: d.identifiers?.pan,
     gstin: d.identifiers?.gstin,
     orgNo: d.orgNo || d.registrationNumber,
   };
   for (const [key, label, type, required] of [
-    ["firstName", "First Name", "text", true],
-    ["lastName", "Last Name", "text", true],
+    ["contactPersonName", "Contact Person Name", "text", true],
     ["address", "Registered address", "textarea", true],
     ["contactEmail", "Email", "email", true],
     ["contactPhone", "Phone", "tel", true],
-    ["pan", "PAN (optional)", "text", false],
     ["gstin", "GSTIN (optional)", "text", false],
     ["orgNo", "OrgNo", "text", true],
   ]) {
     const input = field(fields, key, label, values[key] || "", type, required);
-    input.maxLength = key === "pan" ? 10 : key === "gstin" ? 15 : 1000;
-    if (key === "pan" || key === "gstin") input.pattern = `[A-Za-z0-9]{${key === "pan" ? 10 : 15}}`;
+    input.maxLength = key === "gstin" ? 15 : 1000;
+    if (key === "gstin") input.pattern = "[A-Za-z0-9]{15}";
   }
-  f.append(el("p", "OrgNo is your organization's registration number. PAN and GSTIN can be left blank if not applicable."));
+  f.append(el("p", "OrgNo is your organization's registration number. GSTIN can be left blank if not applicable."));
   if (isPublic) {
     f.append(el("p", "Use the email address of your future organization administrator. After approval, sign in with this email to activate access."));
     if (o.id) f.elements.contactEmail.readOnly = true;
@@ -215,7 +209,7 @@ export async function company(root, view = { expanded: new Set(), query: "", sta
       );
     for (const [key, value] of Object.entries(o.draft.identifiers || {}))
       if (value) c.append(el("p", `${key.toUpperCase()}: ${value}`));
-    const labels = { firstName: "First Name", lastName: "Last Name", address: "Registered address", contactEmail: "Email", contactPhone: "Phone", orgNo: "OrgNo" };
+    const labels = { contactPersonName: "Contact Person Name", firstName: "First Name", lastName: "Last Name", address: "Registered address", contactEmail: "Email", contactPhone: "Phone", orgNo: "OrgNo" };
     for (const [k, v] of Object.entries(o.draft))
       if (typeof v === "string" && !["formVersion", "noticeVersion"].includes(k)) c.append(el("p", `${labels[k] || k}: ${v}`));
     if (o.publicApplication) c.append(el("p", "Public application · Contact email is unverified until the applicant signs in to activate access."));

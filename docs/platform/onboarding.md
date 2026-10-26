@@ -89,8 +89,8 @@ Cognito sign-in invitations remain independently controlled by `EnableActivation
 
 1. Open the application and choose **Apply to register your organization**.
 2. Choose **Start application**.
-3. Enter **First Name**, **Last Name**, **Registered address**, **Email**, **Phone** and **OrgNo**. OrgNo is the organization's registration number. Use the email of the intended organization administrator.
-4. Enter **PAN** and **GSTIN** only if applicable. They are optional. Supplied PAN and GSTIN values must contain 10 and 15 alphanumeric characters respectively.
+3. Enter **Contact Person Name**, **Registered address**, **Email**, **Phone** and **OrgNo**. OrgNo is the organization's registration number. Use the email of the intended organization administrator.
+4. Enter **GSTIN** only if applicable. It is optional and must contain 15 alphanumeric characters when supplied.
 5. Read the privacy notice and select **I accept the service terms** and **I am authorized to represent this organization**.
 6. Choose **Save application**. Save the application reference and private access key confidentially. Keep the tab/session available so you can return to the application. The contact email cannot be changed after creating the public draft.
 7. Choose **Continue application & upload documents**. Under **Supporting documents**, select the document type and a registration PDF of up to **5 MB**, then choose **Upload document**. Do not upload Aadhaar.

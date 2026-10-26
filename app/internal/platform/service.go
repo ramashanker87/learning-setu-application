@@ -173,7 +173,14 @@ func normalizeApplication(d Doc) Doc {
 	d["contactEmail"] = strings.ToLower(s(d, "contactEmail"))
 	d["type"] = "ORGANIZATION"
 	d["displayName"] = "Organization " + s(d, "orgNo")
-	d["representative"] = Doc{"name": s(d, "firstName") + " " + s(d, "lastName"), "phone": s(d, "contactPhone")}
+	name := s(d, "firstName") + " " + s(d, "lastName")
+	if _, ok := d["contactPersonName"]; ok {
+		name = strings.TrimSpace(s(d, "contactPersonName"))
+		d["contactPersonName"] = name
+		delete(d, "firstName")
+		delete(d, "lastName")
+	}
+	d["representative"] = Doc{"name": name, "phone": s(d, "contactPhone")}
 	ids := m(d, "identifiers")
 	for _, key := range []string{"pan", "gstin"} {
 		if value, ok := ids[key].(string); ok {
@@ -186,7 +193,11 @@ func normalizeApplication(d Doc) Doc {
 
 func validateApplication(d Doc) error {
 	if s(d, "formVersion") == "organization-v2" {
-		if err := required(d, "firstName", "lastName", "address", "contactPhone", "orgNo"); err != nil {
+		nameFields := []string{"firstName", "lastName"}
+		if _, ok := d["contactPersonName"]; ok {
+			nameFields = []string{"contactPersonName"}
+		}
+		if err := required(d, append(nameFields, "address", "contactPhone", "orgNo")...); err != nil {
 			return err
 		}
 		if !validEmail(s(d, "contactEmail")) || !b(d, "termsAccepted") || !b(d, "authorityDeclared") || s(d, "noticeVersion") != Notice {

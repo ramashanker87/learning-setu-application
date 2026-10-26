@@ -174,3 +174,11 @@ Deployed `20261025-reading-status-1` (digest `sha256:af12d6848fe720e906f7dea5d22
 Organization administrators now see assessment coverage, clickable reading status summaries, school coverage and status bars, and individual student status badges with next-step guidance. Status follows the selected metric and assessment scope.
 
 Reading progress API tests and frontend model tests passed. The live health endpoint returned `{"status":"ok"}`, and the served dashboard JavaScript matched the local release. Browser regression against the deployed frontend passed using synthetic API responses, including status filtering, organization/school/student views, metrics, language/date/source filters, pagination, keyboard chart access, mobile layouts, and empty/error recovery. Verification did not modify live student data or call transcription providers.
+
+## 26 October 2026 — organization contact person form
+
+Deployed `20261026-contact-person-1` (digest `sha256:0b7a3e3696d96ec3af1f9f8ceeb79950191ebda8fb3fea7067a5c2114f9ca5f5`) to `learning-setu-staging` using profile `jso` in `ap-south-1`. CloudFormation reached `UPDATE_COMPLETE`; all three ECS service rollouts completed with their desired running counts and zero failed tasks. The update reused the existing template and parameters, changing only ImageUri. Previous image: `20261025-english-transcribe-1`.
+
+The application form now collects Contact Person Name instead of separate First Name and Last Name fields and no longer displays PAN. Existing names are populated when editing older applications; previously stored identifiers are preserved. Backend validation accepts the full contact name while retaining older payload support, and Hindi labels and application documentation match the revised form.
+
+All Go tests and JavaScript syntax checks passed. The live API health check passed and the served onboarding module matched the local release. A live browser check passed the contact-name field, removed fields, mobile layout and absence of browser errors without submitting an application.

@@ -147,3 +147,29 @@ func TestSimplifiedApplicationValidationAndNormalization(t *testing.T) {
 		t.Fatalf("unexpected normalized application: %#v", saved)
 	}
 }
+
+func TestContactPersonApplication(t *testing.T) {
+	for _, name := range []string{"  Asha  ", "  Asha Devi Kumar  ", "", "   "} {
+		t.Run(name, func(t *testing.T) {
+			a, _, _ := fixture(t)
+			d := publicDraft()
+			d["contactPersonName"] = name
+			delete(d, "firstName")
+			delete(d, "lastName")
+			created, err := a.CreatePublicApplication(context.Background(), d)
+			if name == "" || name == "   " {
+				check(t, err, 422)
+				return
+			}
+			must(t, err)
+			saved := m(m(created, "application"), "draft")
+			want := "Asha"
+			if name == "  Asha Devi Kumar  " {
+				want = "Asha Devi Kumar"
+			}
+			if s(saved, "contactPersonName") != want || s(m(saved, "representative"), "name") != want {
+				t.Fatalf("contact person name was not preserved: %#v", saved)
+			}
+		})
+	}
+}
